@@ -31,6 +31,9 @@ type LegRepository interface {
 	ReserveCapacity(context.Context, string, string, int64, int64) error
 	UpdateLegStatus(context.Context, string, string, domain.LegStatus, int64) error
 }
+type BookingRepository interface {
+	BookShipment(context.Context, string, string, string, int64, int64, time.Time) (domain.Shipment, error)
+}
 type ComplianceRepository interface {
 	GetCustoms(context.Context, string) (domain.CustomsCase, error)
 	PutCustoms(context.Context, domain.CustomsCase) error
@@ -53,6 +56,7 @@ type Store interface {
 	SessionRepository
 	ShipmentRepository
 	LegRepository
+	BookingRepository
 	ComplianceRepository
 	AuditRepository
 	OutboxRepository

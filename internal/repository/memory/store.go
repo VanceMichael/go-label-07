@@ -236,6 +236,39 @@ func (s *Store) UpdateLegStatus(_ context.Context, tenant, id string, status dom
 	s.legs[id] = v
 	return nil
 }
+func (s *Store) BookShipment(_ context.Context, tenant, shipmentID, legID string, shipmentVersion, legVersion int64, at time.Time) (domain.Shipment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	shipment, ok := s.shipments[shipmentID]
+	if !ok || shipment.TenantID != tenant {
+		return domain.Shipment{}, domain.ErrNotFound
+	}
+	leg, ok := s.legs[legID]
+	if !ok || leg.TenantID != tenant {
+		return domain.Shipment{}, domain.ErrNotFound
+	}
+	if shipment.Version != shipmentVersion || leg.Version != legVersion {
+		return domain.Shipment{}, domain.ErrConflict
+	}
+	if !shipment.CanTransition(domain.ShipmentBooked) || leg.Status != domain.LegOpen {
+		return domain.Shipment{}, domain.ErrState
+	}
+	if shipment.Origin != leg.Origin || shipment.Destination != leg.Destination {
+		return domain.Shipment{}, domain.ErrInvalid
+	}
+	if err := domain.ValidateCapacity(leg, shipment.WeightKg); err != nil {
+		return domain.Shipment{}, err
+	}
+	leg.ReservedKg += shipment.WeightKg
+	leg.Version++
+	shipment.Status = domain.ShipmentBooked
+	shipment.LegID = &legID
+	shipment.UpdatedAt = at
+	shipment.Version++
+	s.legs[legID] = leg
+	s.shipments[shipmentID] = shipment
+	return shipment, nil
+}
 func (s *Store) GetCustoms(_ context.Context, id string) (domain.CustomsCase, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

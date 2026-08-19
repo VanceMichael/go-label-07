@@ -141,26 +141,21 @@ func (a *Application) BookShipment(ctx context.Context, u domain.User, id, legID
 	if err != nil {
 		return domain.Shipment{}, err
 	}
-	if !s.CanTransition(domain.ShipmentBooked) {
-		return domain.Shipment{}, domain.ErrState
-	}
 	leg, err := a.store.GetLeg(ctx, u.TenantID, legID)
 	if err != nil {
 		return domain.Shipment{}, err
 	}
-	if err := domain.ValidateCapacity(leg, s.WeightKg); err != nil {
-		return domain.Shipment{}, err
+	if !s.CanTransition(domain.ShipmentBooked) || leg.Status != domain.LegOpen {
+		return domain.Shipment{}, domain.ErrState
 	}
-	if err := a.store.ReserveCapacity(ctx, u.TenantID, legID, s.WeightKg, leg.Version); err != nil {
-		return domain.Shipment{}, err
+	if s.Origin != leg.Origin || s.Destination != leg.Destination {
+		return domain.Shipment{}, domain.ErrInvalid
 	}
-	s.Status = domain.ShipmentBooked
-	s.LegID = &legID
-	s.UpdatedAt = a.clock.Now()
-	if err := a.store.UpdateShipment(ctx, s, s.Version); err != nil {
+	booked, err := a.store.BookShipment(ctx, u.TenantID, id, legID, s.Version, leg.Version, a.clock.Now())
+	if err != nil {
 		return domain.Shipment{}, fmt.Errorf("book shipment: %w", err)
 	}
-	return s, nil
+	return booked, nil
 }
 func (a *Application) TransitionShipment(ctx context.Context, u domain.User, id string, next domain.ShipmentStatus) (domain.Shipment, error) {
 	if u.Role != domain.RoleCoordinator && u.Role != domain.RoleGroundAgent {
@@ -225,6 +220,9 @@ func (a *Application) PutCustoms(ctx context.Context, u domain.User, c domain.Cu
 	if u.Role != domain.RoleCoordinator {
 		return domain.CustomsCase{}, domain.ErrForbidden
 	}
+	if _, err := a.store.GetShipment(ctx, u.TenantID, c.ShipmentID); err != nil {
+		return domain.CustomsCase{}, err
+	}
 	old, err := a.store.GetCustoms(ctx, c.ShipmentID)
 	if err == nil && !old.Status.CanTransition(c.Status) {
 		return domain.CustomsCase{}, domain.ErrState
@@ -239,6 +237,9 @@ func (a *Application) PutCustoms(ctx context.Context, u domain.User, c domain.Cu
 func (a *Application) PutSecurity(ctx context.Context, u domain.User, s domain.SecurityCheck) (domain.SecurityCheck, error) {
 	if u.Role != domain.RoleGroundAgent && u.Role != domain.RoleCoordinator {
 		return domain.SecurityCheck{}, domain.ErrForbidden
+	}
+	if _, err := a.store.GetShipment(ctx, u.TenantID, s.ShipmentID); err != nil {
+		return domain.SecurityCheck{}, err
 	}
 	s.ID = nonEmpty(s.ID, randomID())
 	if s.Status == domain.SecurityPassed {
